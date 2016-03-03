@@ -44,7 +44,7 @@ int main (int argc, char **argv)
     addr_t eprocess_head = 0;
     char *procname = NULL;
     vmi_pid_t pid = 0;
-    unsigned long tasks_offset = 0, pid_offset = 0, name_offset = 0, handletable_offset = 0,ht_offset = 0,ht_pid = 0,eprocess_offset = 0x0008;
+    unsigned long tasks_offset = 0, pid_offset = 0, name_offset = 0, handletable_offset = 0,ht_offset = 0,ht_pid = 0;
     status_t status;
 
     /* this is the VM or file that we are looking at */
@@ -139,6 +139,22 @@ int main (int argc, char **argv)
     next_list_entry = list_head1 + ht_offset;
     list_head1 = next_list_entry;
 
+
+
+    /*addr_t eprocess_head = list_head + 0x8;
+
+    status = vmi_read_addr_va(vmi, eprocess_head, 0, &eprocess_head);
+
+    eprocess_head += tasks_offset;
+
+    status = vmi_read_addr_va(vmi, eprocess_head, 0, &eprocess_head);
+
+    eprocess_head += pid_offset;
+
+    vmi_read_32_va(vmi, eprocess_head, 0, (uint32_t*)&pid);
+
+    printf("%5d\n",pid);*/
+
     /* walk the task list */
     do {
 
@@ -157,12 +173,11 @@ int main (int argc, char **argv)
          * so this is safe enough for x64 Windows for example purposes */
         vmi_read_32_va(vmi, current_process + ht_pid, 0, (uint32_t*)&pid);
 
-        vmi_read_addr_va(vmi,current_process + eprocess_offset,0,&eprocess_head);
-        //printf("The eprocess_head list pointer is at %"PRIx64"\n", eprocess_head);
+        status = vmi_read_addr_va(vmi,current_process + 0x8, 0, &eprocess_head);
 
-        if(eprocess_head != 0)
-        {
-        	procname = vmi_read_str_va(vmi,eprocess_head + name_offset, 0);
+        procname = vmi_read_str_va(vmi, eprocess_head + name_offset, 0);
+
+        /*procname = vmi_read_str_va(vmi, current_process + name_offset, 0);*/
 
         if (!procname) {
             printf("Failed to find procname\n");
@@ -175,11 +190,6 @@ int main (int argc, char **argv)
             free(procname);
             procname = NULL;
         }
-    }
-    else
-    {
-    	printf("[%5d] (struct addr:%"PRIx64")\n", pid, current_process);
-    }
 
         /* follow the next pointer */
 
