@@ -16,9 +16,8 @@ Install Virtual Machine:-
 			chmod +x VMdiskubuntu.sh
 			chmod +x VMcreatewindows.sh
 			chmod +x VMcreateubuntu.sh
-			chmod +x RekallInstall.sh
 			chmod +x Installnew.sh
-7. Run disk creator by typing ./VMdiskwin.sh
+7. Run disk creator by typing ./VMdiskwin.sh.
 8. Open VMcreate.sh and change the name of the Windows Installation .iso file you downloaded in the field WINIMG.(It assumes that all your files are present in the Downloads folder of the current user)
 9. Install Windows and then shut down.
 10. Open VMinstall.sh and change the --disk path=/home/USERNAME/..../NAME_OF_DISK_CREATED(Windows in this case).qcow2 
@@ -28,7 +27,7 @@ NOTE: If the VMinstall script gives an error of network bridge doesn't exist, th
 13. Check that it is present in the qemu:///system domain by typing virsh -c qemu:///system list --all
 
 
-NOTE1: If you want to install Ubuntu then instead at step 7 run ./VMDiskubuntu.sh and at step 11 run the script ./Ubuntuinstall.sh and make changes accordingly in the path.
+NOTE1: If you want to install Ubuntu then instead at step 7 run ./VMdiskubuntu.sh and at step 11 run the script ./Ubuntuinstall.sh and make changes accordingly in the path.
 NOTE2: While installing Windows, go to custom install and select browse and navigate to the virt-io CD and install the drivers from 'virtiosto' and 'virtionet' in order to install drivers for hard disk as well as internet.
 
 
@@ -48,6 +47,7 @@ Run examples of libVMI:-
 7. Copy these values and store them.
 8. On the HOST machine, create a file in /etc/libvmi.conf if not present otherwise concatenate the following at the end of the file:
 
+/*Example Config*/
 Ubuntu{
      ostype = "Linux";
      sysmap = "/boot/System.map-3.19.0-25-generic";
@@ -57,12 +57,22 @@ Ubuntu{
      linux_pid = 0x2b4;
      linux_pgd = 0x48;
 }
+ or 
+
+Windows {
+    ostype = "Windows";
+    win_tasks   = 0x0b8;
+    win_pdbase  = 0x018;
+    win_pid     = 0x0b4;
+    win_pname   = 0x16c;
+}
 
 REPLACE WITH VALUES FROM LOG FILE.
 NOTE: Replace the value in system map with the value obtained on the guest machine by running 'sudo uname -r'.
 
+/*EXTRA STEPS FOR UBUNTU*/
 9. Now on the guest machine, open Terminal and type sudo uname -r.
-10. cd to /boot/ and copy the appropriate System.map file to the HOST machine in the /boot/ directory.
+10. cd to /boot/ and copy the appropriate System.map file (indicated by the above command) to the HOST machine in the /boot/ directory.
 
 NOTE: You can copy small files from the GUest to Host easily by using Dropbox. If you have trouble uploading irregular filenames, then just change the extension to .txt while uploading and then delete the extension before using the file on the Host.
 
@@ -70,7 +80,8 @@ NOTE: You can copy small files from the GUest to Host easily by using Dropbox. I
 Install Rekall:-
 
 1. First install all the pre-requisites for Rekall by running ./RekallInstall.sh
-2. 
+2. Then, run ./Rekall.sh
+3. Now follow the commands to be parse PDB mentioned at the end of README.rst in the libVMI directory.
 
 
 
