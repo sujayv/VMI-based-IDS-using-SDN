@@ -1,8 +1,9 @@
+#!/bin/bash/
 virt-install \
              --connect qemu:///system \
              --virt-type kvm \
              --name Ubuntu \
-             --ram 2048 \
+             --ram 1024 \
              --disk path=/home/sujay/Downloads/ubuntu.qcow2,bus=virtio,device=disk,format=qcow2 \
              --graphics type=vnc,listen=0.0.0.0 \
              --vcpus=2 --cpu host \

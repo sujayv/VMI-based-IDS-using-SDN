@@ -1,3 +1,4 @@
+#!/bin/bash/
 virt-install \
              --connect qemu:///system \
              --virt-type kvm \
