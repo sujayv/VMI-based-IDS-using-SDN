@@ -30,7 +30,7 @@
 #include <sys/mman.h>
 #include <stdio.h>
 #include <inttypes.h>
-
+#include <time.h>
 #include <libvmi/libvmi.h>
 
 int main (int argc, char **argv)
@@ -44,32 +44,63 @@ int main (int argc, char **argv)
     addr_t next_module = 0;
     addr_t eprocess_head = 0;
     addr_t peb_listhead =  0;
+    unsigned long sessionptr_offset = 0,slink_offset = 0;
     char *procname = NULL;
     vmi_pid_t pid = 0;
     unsigned long initorder = 0,peb_offset = 0,tasks_offset = 0, pid_offset = 0, name_offset = 0, handletable_offset = 0,ht_offset = 0,ht_pid = 0,eprocess_offset = 0;
     unsigned long session_offset = 0,peb_ldr_offset = 0,taskrun_offset = 0;
     status_t status;
+    vmi_pid_t *pidarr = malloc(32768 * sizeof(vmi_pid_t));
+    vmi_pid_t *handlepidarr = malloc(32768 * sizeof(vmi_pid_t));
+    vmi_pid_t *sessionpidarr = malloc(32768 * sizeof(vmi_pid_t));
+    addr_t *session_space = malloc(100 * sizeof(addr_t));
+    int countmain = 0, counthandle = 0, countsession = 0;
+    clock_t start = 0;
+    clock_t stop = 0;
+    double total = 0;
+    int numsyscalls = 317;
+    FILE *fd = NULL;
+    fd = fopen("/home/sujay/libvmi-master/examples/syscall.txt","r+");
+    if(fd == NULL)
+    {
+    	printf("ERROR\n");
+    	return 0;
+    }
+    for(int i=0;i<32768;i++)
+    {
+    	pidarr[i] = -1;
+    	handlepidarr[i] = -1;
+    	sessionpidarr[i] = -1;
+    }
+    for(int i=0;i<100;i++)
+    {
+    	session_space[i] = 0;
+    }
 
     /* this is the VM or file that we are looking at */
     if (argc != 2) {
         printf("Usage: %s <vmname>\n", argv[0]);
-        return 1;
+        //return 1;
     }
 
     char *name = argv[1];
+    printf("The system being analyzed is %s\n",name);
+    //char *name;
+    //int currentcycle = 0;
 
     /* initialize the libvmi library */
+    start = clock();
     if (vmi_init(&vmi, VMI_AUTO | VMI_INIT_COMPLETE, name) == VMI_FAILURE) {
         printf("Failed to init LibVMI library.\n");
         return 1;
     }
-
+    printf("THE SYSTEM IS NOW BEING ANALYZED...\n");
     /* init the offset values */
     if (VMI_OS_LINUX == vmi_get_ostype(vmi)) {
         tasks_offset = vmi_get_offset(vmi, "linux_tasks");
         name_offset = vmi_get_offset(vmi, "linux_name");
         pid_offset = vmi_get_offset(vmi, "linux_pid");
-        taskrun_offset = 0x1e8;
+        taskrun_offset = 0x78;
     }
     else if (VMI_OS_WINDOWS == vmi_get_ostype(vmi)) {
         tasks_offset = vmi_get_offset(vmi, "win_tasks");
@@ -78,14 +109,16 @@ int main (int argc, char **argv)
         ht_pid = 0x008;
         ht_offset = 0x010;
         eprocess_offset = 0x004;
-        printf("tasks_offset is %lu\n",tasks_offset);
-        printf("name_offset is %lu\n",name_offset);
-        printf("pid_offset is %lu\n",pid_offset);
+        //printf("tasks_offset is %lu\n",tasks_offset);
+        //printf("name_offset is %lu\n",name_offset);
+        //printf("pid_offset is %lu\n",pid_offset);
         handletable_offset = 0x0f4;
         session_offset = 0x0e4;
         peb_offset = 0x1a8;
         peb_ldr_offset = 0x00c;
         initorder = 0x01c;
+        sessionptr_offset = 0x168;
+        slink_offset = 0x010;
         //printf("handletable_offset is %lu\n",handletable_offset);
         //printf("sessionprocesslinks_offset is %lu\n",session_offset);
     }
@@ -104,10 +137,7 @@ int main (int argc, char **argv)
     }
 
     /* pause the vm for consistent memory access */
-    if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
-        printf("Failed to pause VM\n");
-        goto error_exit;
-    } // if
+    
 
     /* demonstrate name and id accessors */
     char *name2 = vmi_get_name(vmi);
@@ -115,10 +145,10 @@ int main (int argc, char **argv)
     if (VMI_FILE != vmi_get_access_mode(vmi)) {
         uint64_t id = vmi_get_vmid(vmi);
 
-        printf("Process listing for VM %s (id=%"PRIu64")\n", name2, id);
+        //printf("Process listing for VM %s (id=%"PRIu64")\n", name2, id);
     }
     else {
-        printf("Process listing for file %s\n", name2);
+        //printf("Process listing for file %s\n", name2);
     }
     free(name2);
 
@@ -132,7 +162,10 @@ int main (int argc, char **argv)
     }
     else if (VMI_OS_WINDOWS == vmi_get_ostype(vmi)) {
 
-        // find PEPROCESS PsInitialSystemProcess
+       /*if (vmi_pause_vm(vmi) != VMI_SUCCESS) {
+        printf("Failed to pause VM\n");
+        goto error_exit;
+    }*/
         if(VMI_FAILURE == vmi_read_addr_ksym(vmi, "PsActiveProcessHead", &list_head)) {
             printf("Failed to find PsActiveProcessHead\n");
             goto error_exit;
@@ -158,7 +191,7 @@ int main (int argc, char **argv)
         }
     }
 
-	printf("Printing the main process list\n");
+	//printf("Printing the main process list\n");
 
 	next_list_entry = list_head;
 
@@ -179,6 +212,7 @@ int main (int argc, char **argv)
         /* NOTE: _EPROCESS.UniqueProcessId is a really VOID*, but is never > 32 bits,
          * so this is safe enough for x64 Windows for example purposes */
         vmi_read_32_va(vmi, current_process + pid_offset, 0, (uint32_t*)&pid);
+        pidarr[countmain++] = pid;
 
         procname = vmi_read_str_va(vmi, current_process + name_offset, 0);
 
@@ -189,12 +223,34 @@ int main (int argc, char **argv)
 
         /* print out the process name */
         if(pid >= 0)
-        	printf("[%5d] %s (struct addr:%"PRIx64")\n", pid, procname, current_process);
+        	//printf("[%5d] %s (struct addr:%"PRIx64")\n", pid, procname, current_process);
         if (procname) {
             free(procname);
             procname = NULL;
         }
+        addr_t t1 = 0;
+        status = vmi_read_addr_va(vmi, current_process + sessionptr_offset, 0, &t1);
+        //printf("%"PRIx64"\n", t1);
+       if(t1 != 0)
+        {
+        	int j = 0;
+        	int flag = 0;
+        	while(session_space[j] != 0)
+        	{
+        		if(t1 == session_space[j])
+        		{
+        			flag = 1;
+        			break;
+        		}
+        		else
+        			j++;
+        	}
+        	if(flag == 0)
+        	{
+        		session_space[j] = t1;
+        	}
 
+        }
         /* follow the next pointer */
 
         status = vmi_read_addr_va(vmi, next_list_entry, 0, &next_list_entry);
@@ -207,7 +263,8 @@ int main (int argc, char **argv)
 
 	if (VMI_OS_WINDOWS == vmi_get_ostype(vmi)) 
 	{
-		printf("Printing HANDLE_TABLE links\n");
+		//printf("Printing HANDLE_TABLE links\n");
+		addr_t eprocess = 0; 
 		    next_list_entry = list_head1 + ht_offset;
 		    list_head1 = next_list_entry;
 		addr_t addrvalue = 0;
@@ -215,8 +272,8 @@ int main (int argc, char **argv)
 
 		        current_process = next_list_entry - ht_offset;
 		        vmi_read_32_va(vmi, current_process + ht_pid, 0, (uint32_t*)&pid);
+		        handlepidarr[counthandle++] = pid;
 		        vmi_read_addr_va(vmi,current_process + eprocess_offset,0,&eprocess_head);
-
 		        if(eprocess_head != 0)
 		        {
 		        	procname = vmi_read_str_va(vmi,eprocess_head + name_offset, 0);
@@ -225,15 +282,37 @@ int main (int argc, char **argv)
 		            printf("Failed to find procname\n");
 		            goto error_exit;
 		        }
-		        printf("[%5d] %s (struct addr:%"PRIx64")\n", pid, procname, current_process);
+		        //printf("[%5d] %s (struct addr:%"PRIx64")\n", pid, procname, current_process);
 		        if (procname) {
 		            free(procname);
 		            procname = NULL;
 		        }
+		        addr_t t1 = 0;
+		        status = vmi_read_addr_va(vmi, eprocess_head + sessionptr_offset, 0, &t1);
+		        if(t1 != 0)
+		        {
+		        	int j = 0;
+		        	int flag = 0;
+		        	while(session_space[j] != 0)
+		        	{
+		        		if(t1 == session_space[j])
+		        		{
+		        			flag = 1;
+		        			break;
+		        		}
+		        		else
+		        			j++;
+		        	}
+		        	if(flag == 0)
+		        	{
+		        		session_space[j] = t1;
+		        	}
+
+		        }
 		    }
 		    else
 		    {
-		    	printf("[%5d] (struct addr:%"PRIx64")\n", pid, current_process);
+		    	//printf("[%5d] (struct addr:%"PRIx64")\n", pid, current_process);
 		    }
 
 		    status = vmi_read_addr_va(vmi, next_list_entry, 0, &next_list_entry);
@@ -244,8 +323,7 @@ int main (int argc, char **argv)
 
 		    } while(next_list_entry != list_head1);
 
-
-		printf("PRINTING ACCORDING TO SESSIONPROCESSLINKS\n");
+		//rintf("PRINTING ACCORDING TO SESSIONPROCESSLINKS\n");
 		while(session_listhead == 0)
 		{
 			status = vmi_read_addr_va(vmi, list_head, 0, &session_listhead);
@@ -254,124 +332,179 @@ int main (int argc, char **argv)
 		        printf("Failed to read next pointer in loop at %"PRIx64"\n", next_list_entry);
 		        goto error_exit;
 		    }
-		    else
-		        printf("The next handle table list pointer is at %"PRIx64"\n", list_head1);
+		    //else
+		        //printf("The next handle table list pointer is at %"PRIx64"\n", list_head1);
 		    session_listhead = session_listhead - tasks_offset + session_offset;
 		    status = vmi_read_addr_va(vmi, session_listhead, 0, &session_listhead);
 		}
-		printf("The session process links start at %"PRIx64"\n",session_listhead);
+		//printf("The session process links start at %"PRIx64"\n",session_listhead);
 
-		next_list_entry = session_listhead;
-		do {
+		int j=0;
+		while(session_space[j] != 0)
+		{
+			session_listhead = session_space[j];
+			status = vmi_read_addr_va(vmi, session_listhead + slink_offset, 0, &session_listhead);
+			next_list_entry = session_listhead;
+			do {
 
-		        current_process = next_list_entry - session_offset;
-		        vmi_read_32_va(vmi, current_process + pid_offset, 0, (uint32_t*)&pid);
+			        current_process = next_list_entry - session_offset;
+			        vmi_read_32_va(vmi, current_process + pid_offset, 0, (uint32_t*)&pid);
+			        sessionpidarr[countsession++] = pid;
+			        procname = vmi_read_str_va(vmi, current_process + name_offset, 0);
+			        int fl = 0;
+			        for(int i=0;i<32768;i++)
+			        {
+			        	if(sessionpidarr[i] == pid)
+			        	{
+			        		fl = 1;
+			        		break;
+			        	}
+			        	else if(sessionpidarr[i] == -1)
+			        		break;
+			        }
+			        if(fl == 0)
+			        {
+			        	sessionpidarr[countsession++] = pid;
+			        }
+			        if (!procname) {
+			            printf("Failed to find procname\n");
+			            goto error_exit;
+			        }
+			       // printf("[%5d] %s (struct addr:%"PRIx64")\n", pid, procname, current_process);
+			        if (procname) {
+			            free(procname);
+			            procname = NULL;
+			        }
 
-		        procname = vmi_read_str_va(vmi, current_process + name_offset, 0);
+			        status = vmi_read_addr_va(vmi, next_list_entry, 0, &next_list_entry);
+			        if (status == VMI_FAILURE) {
+			            printf("Failed to read next pointer in loop at %"PRIx64"\n", next_list_entry);
+			            goto error_exit;
+			        }
 
-		        if (!procname) {
-		            printf("Failed to find procname\n");
-		            goto error_exit;
-		        }
-		        printf("[%5d] %s (struct addr:%"PRIx64")\n", pid, procname, current_process);
-		        if (procname) {
-		            free(procname);
-		            procname = NULL;
-		        }
+			    } while(next_list_entry != session_listhead);
+			j++;
+		}
 
-		        status = vmi_read_addr_va(vmi, next_list_entry, 0, &next_list_entry);
-		        if (status == VMI_FAILURE) {
-		            printf("Failed to read next pointer in loop at %"PRIx64"\n", next_list_entry);
-		            goto error_exit;
-		        }
+/* resume the vm */
+    //vmi_resume_vm(vmi);
 
-		    } while(next_list_entry != session_listhead);
+    /* cleanup any memory associated with the LibVMI instance */
+    vmi_destroy(vmi);
+		int flag = 0;
+		int procfound = 0;
+		for(int i=0;i<32768;i++)
+		{
+			flag = 0;
+			if(handlepidarr[i] != -1)
+			{
+				for(int j=0;j<32768;j++)
+				{
+					if(handlepidarr[i] == pidarr[j])
+					{
+						flag = 1;
+						break;
+					}
+				}
+				if(flag == 0 && handlepidarr[i] != 0)
+				{
+					procfound = 1;
+					printf("Hidden process found using Handle Table with PID %5d\n",handlepidarr[i]);
+				}
+			}
+			else
+				break;
+		}
 
-		printf("ENTERED _PEB withvalue %"PRIx64"\n", peb_listhead);
-		status = vmi_read_addr_va(vmi, peb_listhead+peb_ldr_offset, 0, &peb_listhead);
-        if (status == VMI_FAILURE) {
-            printf("Failed to read next pointer in loop at %"PRIx64"\n", peb_listhead+peb_ldr_offset);
-            goto error_exit;
-        }
-        else
-        	printf("ENTERED _PEB_LDR_DATA withvalue %"PRIx64"\n", peb_listhead);
-		status = vmi_read_addr_va(vmi, peb_listhead+initorder, 1, &peb_listhead);
-        if (status == VMI_FAILURE) {
-            printf("Failed to read next pointer in loop at %"PRIx64"\n", peb_listhead+initorder);
-            goto error_exit;
-        }
-		next_module = peb_listhead;
-		list_head = next_module;
-		while (1) {
-
-	        addr_t tmp_next = 0;
-
-	        vmi_read_addr_va(vmi, next_module, 0, &tmp_next);
-
-	        /* if we are back at the list head, we are done */
-	        if (list_head == tmp_next) {
-	            break;
-	        }
-
-	        /* print out the module name */
-
-	        /* Note: the module struct that we are looking at has a string
-	         * directly following the next / prev pointers.  This is why you
-	         * can just add the length of 2 address fields to get the name.
-	         * See include/linux/module.h for mode details */
-	        if (VMI_OS_LINUX == vmi_get_ostype(vmi)) {
-	            char *modname = NULL;
-
-	            if (VMI_PM_IA32E == vmi_get_page_mode(vmi)) {   // 64-bit paging
-	                modname = vmi_read_str_va(vmi, next_module + 16, 0);
-	            }
-	            else {
-	                modname = vmi_read_str_va(vmi, next_module + 8, 0);
-	            }
-	            printf("%s\n", modname);
-	            free(modname);
-	        }
-	        else if (VMI_OS_WINDOWS == vmi_get_ostype(vmi)) {
-
-	            unicode_string_t *us = NULL;
-
-	            /*
-	             * The offset 0x58 and 0x2c is the offset in the _LDR_DATA_TABLE_ENTRY structure
-	             * to the BaseDllName member.
-	             * These offset values are stable (at least) between XP and Windows 7.
-	             */
-
-	            if (VMI_PM_IA32E == vmi_get_page_mode(vmi)) {
-	                us = vmi_read_unicode_str_va(vmi, next_module + 0x48, 0);
-	            } else {
-	                us = vmi_read_unicode_str_va(vmi, next_module + 0x2c, 0);
-	            }
-
-	            unicode_string_t out = { 0 };
-	            //         both of these work
-	            if (us &&
-	                VMI_SUCCESS == vmi_convert_str_encoding(us, &out,
-	                                                        "UTF-8")) {
-	                printf("%s\n", out.contents);
-	                //            if (us && 
-	                //                VMI_SUCCESS == vmi_convert_string_encoding (us, &out, "WCHAR_T")) {
-	                //                printf ("%ls\n", out.contents);
-	                free(out.contents);
-	            }   // if
-	            if (us)
-	                vmi_free_unicode_str(us);
-	        }
-	        next_module = tmp_next;
-	    }
+		for(int i=0;i<32768;i++)
+		{
+			flag = 0;
+			if(sessionpidarr[i] != -1)
+			{
+				for(int j=0;j<32768;j++)
+				{
+					if(pidarr[j] != -1)
+					{
+						if(sessionpidarr[i] == pidarr[j])
+						{
+							flag = 1;
+							break;
+						}
+					}
+					else
+						break;
+				}
+				if(flag == 0 && handlepidarr[i] != 0)
+				{
+					procfound = 1;
+					printf("Hidden process found using Session Process Links with PID %5d\n",sessionpidarr[i]);
+				}
+			}
+			else
+				break;
+		}
+		if(procfound == 0)
+		{
+			printf("There are NO hidden processes\n");
+		}
 	}
-
 	else if (VMI_OS_LINUX == vmi_get_ostype(vmi)) 
 	{
-		vmi_read_addr_va(vmi, list_head, 0, &list_head);
-		next_list_entry = list_head - tasks_offset + taskrun_offset;
+		//vmi_read_addr_va(vmi, list_head, 0, &list_head);
+		int tostore = 8;
+		fscanf(fd,"%d",&tostore);
+		//printf("The value of 1st line is-------%d\n",tostore);
+		if(tostore == 1)
+		{
+			fclose(fd);
+			fd = fopen("/home/sujay/libvmi-master/examples/syscall.txt","w");
+			fprintf(fd, "%d\n",0);
+			list_head = vmi_translate_ksym2v(vmi, "sys_call_table");
+			//printf("The sys call header is at %"PRIx64"\n", list_head);
+			for(int i=0;i<=numsyscalls;i++)
+			{
+				status = vmi_read_addr_va(vmi, list_head, 0, &next_list_entry);
+				fprintf(fd,"%lu\n", next_list_entry);
+				list_head += 8;
+			}
+			fclose(fd);
+		}
+		else if(tostore == 0)
+		{
+			list_head = vmi_translate_ksym2v(vmi, "sys_call_table");
+			int flag = 0;
+			//printf("The sys call header is at %"PRIx64"\n", list_head);
+			for(int i=0;i<=numsyscalls;i++)
+			{
+				status = vmi_read_addr_va(vmi, list_head, 0, &next_list_entry);
+				unsigned long temp = next_list_entry;
+				unsigned long temp1 = 0;
+				fscanf(fd,"%lu",&temp1);
+				if(temp != temp1)
+				{
+					if(flag == 0)
+					{
+						printf("HOOK DETECTED!!!!\nDetails:\n");
+					}
+					flag = 1;
+					printf("The syscall number %d has a modified address which is %"PRIx64" and the original value should be %"PRIx64"\n",i,temp1,temp);
+				}
+				list_head +=8;
+			}
+			if(flag == 0)
+			{
+				printf("There are NO system call hooks!!!\n");
+			}
+			/* resume the vm */
+    //vmi_resume_vm(vmi);
+
+    /* cleanup any memory associated with the LibVMI instance */
+    vmi_destroy(vmi);
+		}
+		
+		/*next_list_entry = list_head - tasks_offset + taskrun_offset;
 		list_head = next_list_entry;
 		printf("Printing TASK_RUN list\n");
-		/* walk the task list */
 	    do {
 
 	        current_process = next_list_entry - taskrun_offset;
@@ -389,7 +522,6 @@ int main (int argc, char **argv)
 	            procname = NULL;
 	      	}
 
-	        /* follow the next pointer */
 
 	        status = vmi_read_addr_va(vmi, next_list_entry, 0, &next_list_entry);
 	        if (status == VMI_FAILURE) {
@@ -399,14 +531,17 @@ int main (int argc, char **argv)
 	        else
 	        	printf("next pointer in loop at %"PRIx64"\n", next_list_entry - taskrun_offset);
 
-	    } while(next_list_entry != list_head);
+	    } while(next_list_entry != list_head);*/
 	}
 error_exit:
-    /* resume the vm */
-    vmi_resume_vm(vmi);
 
-    /* cleanup any memory associated with the LibVMI instance */
-    vmi_destroy(vmi);
-
-    return 0;
+	free(pidarr);
+	free(handlepidarr);
+	free(sessionpidarr);
+    stop = clock();
+    total = (double)(((stop-start)*1000)/CLOCKS_PER_SEC);
+    printf("Time taken to analyze: %.2lf milliseconds\n",total);
+    //return 0;
+    sleep(3);
+	return 0;
 }
