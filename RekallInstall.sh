@@ -1,4 +1,4 @@
-#!/bin/bash/
+#!/bin/bash
 cd
 svn checkout http://pdbparse.googlecode.com/svn/trunk/ pdbparse-read-only
 cd pdbparse-read-only/

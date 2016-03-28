@@ -1,4 +1,4 @@
-#!/bin/bash/
+#!/bin/bash
 export QEMU_AUDIO_DRV=alsa 
 DISKIMG=~/Downloads/Windows.qcow2
 WINIMG=~/Downloads/windows.iso

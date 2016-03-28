@@ -1,4 +1,4 @@
-#!/bin/bash/
+#!/bin/bash
 export QEMU_AUDIO_DRV=alsa 
 DISKIMG=~/Downloads/Ubuntu.qcow2
 WINIMG=~/Downloads/ubuntu.iso
